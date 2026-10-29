@@ -1,0 +1,7 @@
+# Ignore everything, then allow only the project files
+*
+!.gitignore
+!README.md
+!remoteweb.user.js
+!serve.py
+!demo.html

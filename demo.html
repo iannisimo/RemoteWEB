@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RemoteWEB demo</title>
+<style>
+  body { margin: 0; font: 18px system-ui, sans-serif; background: #111; color: #eee; display: flex; height: 100vh; }
+  .leftbar { width: 200px; background: #1c1c1c; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .leftbar a { color: #eee; text-decoration: none; padding: 10px; border-radius: 6px; }
+  .leftbar a:focus { background: #3d9eff; color: #000; outline: none; } /* site's own focus style */
+  .tab { font-size: 18px; padding: 14px 30px; margin-right: 10px; background: #333; color: #eee; border: 0; border-radius: 6px; }
+  .tab.is-focused { background: #e0e0e0; color: #000; } /* added by JS, a moment after focus */
+  main { flex: 1; padding: 20px; overflow: auto; }
+  input { font-size: 18px; padding: 8px; width: 300px; margin-bottom: 20px; }
+  /* Plain divs, no tabindex: a typical "not made for keyboards" grid */
+  #grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  #grid > div { background: #2a2a2a; height: 140px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; }
+  #modal { position: fixed; inset: 25% 30%; background: #333; padding: 30px; border-radius: 10px; display: none; }
+  #modal.open { display: block; }
+  .row-wrap { display: flex; align-items: flex-start; gap: 10px; margin-top: 30px; }
+  #row { width: 600px; display: flex; gap: 16px; overflow-x: auto; scrollbar-width: none; }
+  #row > button { flex: 0 0 250px; height: 100px; font-size: 18px; background: #2a3a4a; color: #eee; border: 0; border-radius: 8px; }
+  .see-all { height: 100px; font-size: 18px; opacity: 0; } /* only visible on hover */
+  .row-wrap:hover .see-all { opacity: 1; }
+  #log { margin-top: 20px; color: #8c8; }
+</style>
+</head>
+<body>
+  <nav class="leftbar">
+    <a href="#home">Home</a>
+    <a href="#movies">Movies</a>
+    <a href="#series">Series</a>
+    <a href="#settings">Settings</a>
+  </nav>
+  <main>
+    <input id="search" placeholder="Search…">
+    <div id="grid"></div>
+    <h3>Continue watching</h3>
+    <div class="row-wrap">
+      <div id="row"></div>
+      <button class="see-all">See all</button>
+    </div>
+    <h3>Web component (shadow DOM)</h3>
+    <shadow-panel></shadow-panel>
+    <h3>Tabs (focus style added by JS after a delay)</h3>
+    <div class="tabs"><button class="tab">Tab A</button><button class="tab">Tab B</button></div>
+    <div id="log"></div>
+  </main>
+  <div id="modal" aria-modal="true" role="dialog">
+    <p id="modal-title"></p>
+    <button class="play">Play</button>
+    <button class="close">Close</button>
+  </div>
+<script>
+  const grid = document.getElementById('grid');
+  const modal = document.getElementById('modal');
+  for (let i = 1; i <= 16; i++) {
+    const d = document.createElement('div');
+    d.innerHTML = '<span>Item ' + i + '</span>'; // the span inherits cursor:pointer and must not count
+    d.addEventListener('click', () => {
+      document.getElementById('modal-title').textContent = 'Item ' + i;
+      modal.classList.add('open');
+    });
+    grid.appendChild(d);
+  }
+  const row = document.getElementById('row');
+  for (let i = 1; i <= 6; i++) {
+    const b = document.createElement('button');
+    b.textContent = 'Card ' + i;
+    row.appendChild(b);
+  }
+  for (const t of document.querySelectorAll('.tab')) {
+    t.addEventListener('focus', () => setTimeout(() => t.classList.add('is-focused'), 60));
+    t.addEventListener('blur', () => t.classList.remove('is-focused'));
+  }
+  // Fake video player shortcut: K toggles pause (checks keyCode, like many real sites)
+  window.paused = false; window.kCount = 0;
+  document.addEventListener('keydown', (e) => { if (e.keyCode === 75 && e.key === 'k') { window.paused = !window.paused; window.kCount++; } });
+  row.children[0].addEventListener('mouseenter', () => row.children[0].dataset.hovered = 'yes');
+  customElements.define('shadow-panel', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<style>button{font-size:18px;padding:20px 40px;margin-right:16px}</style>' +
+        '<button id="sa">Shadow A</button><button id="sb">Shadow B</button>';
+    }
+  });
+  modal.querySelector('.close').addEventListener('click', () => modal.classList.remove('open'));
+</script>
+<script src="remoteweb.user.js"></script>
+<script>
+  // Automated test: open demo.html?test
+  if (location.search.includes('test')) {
+    const label = (el) => !el ? 'null' : (el.id ? '#' + el.id : '') + ([...el.classList].filter(c => !c.startsWith('remoteweb'))[0] ? '.' + [...el.classList].filter(c => !c.startsWith('remoteweb'))[0] : '') + ':' + (el.textContent || el.placeholder || '').trim().slice(0, 12);
+    const press = (key) => window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const cur = () => label(__remoteweb.current);
+    const results = [];
+    const check = (name, got, want) => results.push((got === want ? 'PASS ' : 'FAIL ') + name + ' got=' + got + ' want=' + want);
+    const steps = [
+      () => press('ArrowRight'),                         () => check('start highlights first item', cur(), ':Item 1'),
+      () => press('ArrowRight'),                         () => check('right -> next sibling', cur(), ':Item 2'),
+      () => { press('ArrowRight'); press('ArrowRight'); press('ArrowRight'); }, () => check('right wraps via sibling rule', cur(), ':Item 5'),
+      () => press('ArrowLeft'),                          () => check('left from col 1 -> nearest leftbar item', cur(), ':Settings'),
+      () => press('ArrowUp'),                            () => check('up inside leftbar', cur(), ':Series'),
+      () => press('ArrowRight'),                         () => check('right from leftbar restores grid', cur(), ':Item 5'),
+      () => press('ArrowUp'),                            () => check('spatial up', cur(), ':Item 1'),
+      () => press('ArrowUp'),                            () => check('spatial up to search', cur(), '#search:Search…'),
+      () => press('Enter'),                              () => check('ok on input -> edit mode', label(__remoteweb.editing), '#search:Search…'),
+      () => press('ArrowLeft'),                          () => check('arrows pass through while editing', label(__remoteweb.editing), '#search:Search…'),
+      () => press('Escape'),                             () => check('back leaves edit mode', label(__remoteweb.editing), 'null'),
+      () => press('ArrowDown'),                          () => check('down from search', cur(), ':Item 1'),
+      () => press('Enter'),                              () => check('ok clicks div -> modal', String(modal.classList.contains('open')), 'true'),
+      () => press('ArrowDown'),                          () => check('navigation scoped to modal', cur(), '.play:Play'),
+      () => press('ArrowRight'),                         () => check('right inside modal', cur(), '.close:Close'),
+      () => press('ArrowLeft'),                          () => {},
+      () => press('Escape'),                             () => check('back rule clicks close', String(modal.classList.contains('open')), 'false'),
+      // Carousel: "See all" sits just outside the row and is often closer than the next, clipped card.
+      () => __remoteweb.focus(row.children[1]),          () => check('focus card 2', cur(), ':Card 2'),
+      () => press('ArrowRight'),                         () => check('right -> card 3', cur(), ':Card 3'),
+      () => press('ArrowRight'),                         () => check('right stays in row (card 4, not See all)', cur(), ':Card 4'),
+      () => press('ArrowRight'),                         () => check('right -> card 5', cur(), ':Card 5'),
+      () => press('ArrowRight'),                         () => check('right -> card 6', cur(), ':Card 6'),
+      () => press('ArrowRight'),                         () => check('end of row -> leaves to See all', cur(), '.see-all:See all'),
+      () => press('ArrowLeft'),                          () => check('left back into row', cur(), ':Card 6'),
+      () => press('ArrowUp'),                            () => check('up leaves row to grid', cur().startsWith(':Item'), true),
+      // Hover-only button: reachable, and forced visible while highlighted
+      () => __remoteweb.focus(row.children[5]),          () => {},
+      () => press('ArrowRight'),                         () => check('opacity:0 button reachable', cur(), '.see-all:See all'),
+      () => {},                                          () => check('highlighted button forced visible', getComputedStyle(document.querySelector('.see-all')).opacity, '1'),
+      // Hover events
+      () => __remoteweb.focus(row.children[0]),          () => check('mouseenter sent on highlight', row.children[0].dataset.hovered, 'yes'),
+      // Shadow DOM
+      () => press('ArrowDown'),                          () => check('down into shadow DOM', cur(), '#sa:Shadow A'),
+      () => press('ArrowRight'),                         () => check('right inside shadow DOM', cur(), '#sb:Shadow B'),
+      () => press('ArrowUp'),                            () => check('up out of shadow DOM', cur().startsWith(':Card'), true),
+      // cursor:pointer detection: 16 grid divs, not their inherited spans
+      () => {},                                          () => check('grid divs found via cursor:pointer', __remoteweb.candidates().filter(e => e.parentElement === grid).length, 16),
+      () => {},                                          () => check('inherited-pointer spans skipped', __remoteweb.candidates().filter(e => e.tagName === 'SPAN').length, 0),
+      // why()
+      () => {},                                          () => check('why() on a span', __remoteweb.why(grid.querySelector('span'))[0].includes('inherited'), true),
+      // Debug view
+      () => press('F2'),                                 () => check('F2 shows debug view', document.body.parentElement.lastElementChild.textContent.includes('RemoteWEB debug'), true),
+      () => press('F2'),                                 () => check('F2 hides debug view', [...document.documentElement.children].some(e => e.textContent.startsWith('RemoteWEB debug')), false),
+      // Rule recording: "any card in the row, Up -> search field"
+      () => { __remoteweb.clearRules(); __remoteweb.focus(row.children[1]); press('F4'); }, () => check('F4 starts recording', __remoteweb.recording.step, 'from'),
+      () => press('Enter'),                              () => check('OK picks FROM', __remoteweb.recording.step, 'fromSel'),
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Any similar item in this container')); for (let k = 0; k < n; k++) press('ArrowDown'); },
+                                                         () => check('container option offered', __remoteweb.recording.options[__remoteweb.recording.index].includes('#row > button'), true),
+      () => press('Enter'),                              () => check('then asks for key', __remoteweb.recording.step, 'key'),
+      () => press('ArrowUp'),                            () => check('key captured, asks what', __remoteweb.recording.step, 'what'),
+      () => press('Enter'),                              () => check('move chosen, picking target', __remoteweb.recording.step, 'target'),
+      () => { __remoteweb.focus(document.getElementById('search')); press('Enter'); }, () => check('target picked', __remoteweb.recording.step, 'toSel'),
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Exactly this element')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); },
+                                                         () => check('asks scope', __remoteweb.recording.step, 'scope'),
+      () => press('Enter'),                              () => check('rule saved', JSON.stringify(__remoteweb.rules()), JSON.stringify([{ from: '#row > button', key: 'up', to: '#search' }])),
+      () => { __remoteweb.focus(row.children[3]); press('ArrowUp'); }, () => check('recorded rule works', cur(), '#search:Search…'),
+      () => {},                                          () => check('rule stored in localStorage', JSON.parse(localStorage.getItem('remoteweb:rules')).length, 1),
+      // Mouse picking, then cancel
+      () => press('F4'),                                 () => {},
+      () => grid.children[2].querySelector('span').click(), () => check('mouse click picks usable parent', __remoteweb.recording.options[0].includes('#grid > div:nth-child(3)'), true),
+      () => {},                                          () => check('click did not open the modal', modal.classList.contains('open'), false),
+      () => press('F4'),                                 () => check('F4 cancels', __remoteweb.recording, null),
+      () => __remoteweb.clearRules(),                    () => {},
+      // Any key: record "h anywhere -> Home in the sidebar"
+      () => { __remoteweb.focus(grid.children[2]); press('F4'); press('Enter'); }, () => {},
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Anywhere on the page')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); },
+                                                         () => check('anywhere option chosen', __remoteweb.recording.step, 'key'),
+      () => press('h'),                                  () => check('letter key captured', __remoteweb.recording.step, 'what'),
+      () => {},                                          () => check('no "normal movement" for non-dpad keys', __remoteweb.recording.options.some(l => l.startsWith('Normal arrow')), false),
+      () => press('Enter'),                              () => {},
+      () => { __remoteweb.focus(document.querySelector('.leftbar a')); press('Enter'); }, () => {},
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Exactly this element')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); press('Enter'); },
+                                                         () => check('raw key rule saved', JSON.stringify(__remoteweb.rules()[0]), JSON.stringify({ from: 'html', key: 'h', to: 'body > nav.leftbar > a:nth-child(1)' })),
+      () => { __remoteweb.focus(grid.children[6]); press('h'); }, () => check('h jumps to Home', cur(), ':Home'),
+      () => { __remoteweb.focus(row.children[3]); press('h'); }, () => check('h works from anywhere', cur(), ':Home'),
+      () => { __remoteweb.focus(document.getElementById('search')); press('Enter'); press('h'); },
+                                                         () => check('h while typing goes to the field', label(__remoteweb.editing), '#search:Search…'),
+      () => press('Escape'),                             () => {},
+      () => { const ev = new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }); window.dispatchEvent(ev); results.push((ev.defaultPrevented ? 'FAIL' : 'PASS') + ' key without rule left to the page'); }, () => {},
+      // Modifier combo
+      () => { __remoteweb.clearRules(); __remoteweb.rules().push({ from: 'html', key: 'Ctrl+ArrowUp', to: '#search' }); __remoteweb.focus(grid.children[9]);
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', ctrlKey: true, bubbles: true, cancelable: true })); },
+                                                         () => check('Ctrl+ArrowUp rule', cur(), '#search:Search…'),
+      () => __remoteweb.clearRules(),                    () => {},
+      // Send a key: record "p anywhere -> send k"
+      () => { __remoteweb.clearRules(); __remoteweb.focus(grid.children[0]); press('F4'); press('Enter'); }, () => {},
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Anywhere on the page')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); press('p'); },
+                                                         () => {},
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Send a different key')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); },
+                                                         () => check('asks key to send', __remoteweb.recording.step, 'sendKey'),
+      () => press('k'),                                  () => check('then asks scope', __remoteweb.recording.step, 'scope'),
+      () => press('Enter'),                              () => check('send rule saved', JSON.stringify(__remoteweb.rules()[0]), JSON.stringify({ from: 'html', key: 'p', send: 'k' })),
+      () => press('p'),                                  () => check('p sends k (player paused, keyCode ok)', window.paused, true),
+      () => press('p'),                                  () => check('p again resumes', window.paused, false),
+      () => { __remoteweb.clearRules(); __remoteweb.rules().push({ key: 'k', send: 'k' }); window.kCount = 0; press('k'); },
+                                                         () => check('k -> send k does not loop', window.kCount, 1),
+      () => { __remoteweb.clearRules(); __remoteweb.rules().push({ key: 'p', send: ['k', 'k', 'k'] }); window.kCount = 0; press('p'); },
+                                                         () => check('sequence sends 3 keys', window.kCount, 3),
+      () => __remoteweb.clearRules(),                    () => {},
+      // Site's own focus style: don't draw our ring on top
+      () => __remoteweb.focus(document.querySelector('.leftbar a')), () => {},
+      () => {},                                          () => { const a = document.querySelector('.leftbar a'); check('site :focus style -> no ring', a.classList.contains('remoteweb-focus'), false); },
+      () => {},                                          () => check('...but still the current element', __remoteweb.current, document.querySelector('.leftbar a')),
+      () => __remoteweb.focus(grid.children[0]),         () => check('div without focus style -> ring', grid.children[0].classList.contains('remoteweb-focus'), true),
+      () => __remoteweb.focus(row.children[0]),          () => check('browser default ring only -> our ring', row.children[0].classList.contains('remoteweb-focus'), true),
+      () => __remoteweb.focus(document.querySelector('.tab')), () => check('async focus class: ring at first', document.querySelector('.tab').classList.contains('remoteweb-focus'), true),
+      ...Array(20).fill(() => {}),
+      () => {},                                          () => check('async focus class: ring removed later', document.querySelector('.tab').classList.contains('remoteweb-focus'), false),
+      () => press('ArrowRight'),                         () => check('moving on works', label(__remoteweb.current), '.tab:Tab B'),
+      () => { __remoteweb.config.useSiteFocus = false; __remoteweb.focus(document.querySelectorAll('.leftbar a')[1]); },
+                                                         () => check('useSiteFocus off -> always our ring', document.querySelectorAll('.leftbar a')[1].classList.contains('remoteweb-focus'), true),
+      () => { __remoteweb.config.useSiteFocus = true; }, () => {},
+      // Settings dialog
+      () => { __remoteweb.clearAll(); __remoteweb.rules().push({ from: 'html', key: 'h', to: '#search' }, { from: '#grid > div', key: 'up', to: '#search', page: location.pathname }); __remoteweb.focus(grid.children[0]); },
+                                                         () => {},
+      () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })),
+                                                         () => check('Ctrl+Shift+F8 opens settings', !!__remoteweb.settingsRoot, true),
+      () => {},                                          () => check('shows active status', __remoteweb.settingsRoot.querySelector('.status').textContent, '● Active on this page'),
+      () => {},                                          () => check('lists page and site rules', __remoteweb.settingsRoot.querySelectorAll('button.del').length, 2),
+      () => {},                                          () => check('lists CONFIG rules read-only', [...__remoteweb.settingsRoot.querySelectorAll('.txt')].some(t => t.textContent.includes('sibling (+1)')), true),
+      () => { const btns = [...__remoteweb.settingsRoot.querySelectorAll('button')]; const n = btns.findIndex(b => b.classList.contains('del')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); },
+                                                         () => check('Delete with OK removes the page rule', JSON.stringify(__remoteweb.rules()), JSON.stringify([{ from: 'html', key: 'h', to: '#search' }])),
+      () => { const btns = [...__remoteweb.settingsRoot.querySelectorAll('button')]; const n = btns.findIndex(b => b.textContent.includes('Smooth scrolling')); for (let k = 0; k < 40; k++) press('ArrowUp'); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); },
+                                                         () => check('option toggle marked changed', [...__remoteweb.settingsRoot.querySelectorAll('button')].find(b => b.textContent.includes('Smooth scrolling')).textContent.includes('changed'), true),
+      () => press('Enter'),                              () => check('toggle back = default again', [...__remoteweb.settingsRoot.querySelectorAll('button')].find(b => b.textContent.includes('Smooth scrolling')).textContent.includes('changed'), false),
+      () => { for (let k = 0; k < 40; k++) press('ArrowUp'); press('ArrowDown'); press('Enter'); press('Enter'); },
+                                                         () => check('page switched OFF', __remoteweb.settingsRoot.querySelector('.status').textContent, '○ Off on this page'),
+      () => press('Escape'),                             () => check('Back closes settings', __remoteweb.settingsRoot, null),
+      () => {},                                          () => check('highlight removed when off', document.querySelectorAll('.remoteweb-current').length, 0),
+      () => press('ArrowRight'),                         () => check('arrows do nothing when off', __remoteweb.current, null),
+      () => press('h'),                                  () => check('rules do nothing when off', __remoteweb.current, null),
+      () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); press('ArrowDown'); press('Enter'); },
+                                                         () => check('page back to "same as site" -> on', __remoteweb.isEnabled(), true),
+      () => press('Escape'),                             () => {},
+      () => { __remoteweb.config.sites[0].enabled = false; }, () => check('off by default without CONFIG/settings', __remoteweb.isEnabled(), false),
+      () => { __remoteweb.config.sites[0].enabled = true; __remoteweb.clearAll(); }, () => check('back on', __remoteweb.isEnabled(), true),
+      // F5: ignore Item 2 for auto-move
+      () => { __remoteweb.clearIgnored(); __remoteweb.focus(grid.children[1]); press('F5'); }, () => check('F5 opens ignore panel', __remoteweb.recording.step, 'ignoreSel'),
+      () => press('Enter'),                              () => check('ignore asks scope', __remoteweb.recording.step, 'ignoreScope'),
+      () => press('Enter'),                              () => check('ignore saved site-wide', JSON.stringify(__remoteweb.ignored()), JSON.stringify([{ sel: '#grid > div:nth-child(2)' }])),
+      () => { __remoteweb.focus(grid.children[5]); press('ArrowUp'); }, () => check('up from Item 6 skips ignored Item 2', cur() !== ':Item 2', true),
+      () => { __remoteweb.focus(grid.children[0]); press('ArrowRight'); }, () => check('rules still target ignored element', cur(), ':Item 2'),
+      () => {},                                          () => check('why() mentions ignore', __remoteweb.why(grid.children[1]).some(l => l.includes('ignored by auto-move')), true),
+      // Un-ignore on this page only, then undo that
+      () => press('F5'),                                 () => check('F5 on site-ignored asks where', __remoteweb.recording.step, 'unignoreScope'),
+      () => { press('ArrowDown'); press('Enter'); },     () => check('page un-ignore stored', JSON.stringify(__remoteweb.ignored()[1]), JSON.stringify({ sel: '#grid > div:nth-child(2)', page: location.pathname, unignore: true })),
+      () => { __remoteweb.focus(grid.children[5]); press('ArrowUp'); }, () => check('page un-ignore beats site ignore', cur(), ':Item 2'),
+      () => press('F5'),                                 () => check('F5 removes page entry, site ignore back', JSON.stringify(__remoteweb.ignored()), JSON.stringify([{ sel: '#grid > div:nth-child(2)' }])),
+      () => press('F5'),                                 () => check('F5 on site-ignored again asks', __remoteweb.recording.step, 'unignoreScope'),
+      () => press('Enter'),                              () => check('un-ignore everywhere', __remoteweb.ignored().length, 0),
+      () => { __remoteweb.focus(grid.children[5]); press('ArrowUp'); }, () => check('up from Item 6 reaches Item 2 again', cur(), ':Item 2'),
+      // Page rules beat site rules, and only apply on their page
+      () => { __remoteweb.clearRules(); __remoteweb.rules().push(
+                { from: '#row > button', key: 'up', to: '#search' },
+                { from: '#row > button', key: 'up', action: 'default', page: location.pathname }); },
+                                                         () => {},
+      () => { __remoteweb.focus(row.children[2]); press('ArrowUp'); }, () => check('page rule overrides site rule', cur().startsWith(':Item'), true),
+      () => { __remoteweb.rules()[1].page = '/some/other/page'; __remoteweb.focus(row.children[2]); press('ArrowUp'); },
+                                                         () => check('other page rule not applied', cur(), '#search:Search…'),
+      // Recording a page-only "normal movement" rule through the UI
+      () => { __remoteweb.clearRules(); __remoteweb.focus(grid.children[0]); press('F4'); press('Enter'); },
+                                                         () => {},
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Any similar item in this container')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); press('ArrowRight'); },
+                                                         () => check('at what step', __remoteweb.recording.step, 'what'),
+      () => { const n = __remoteweb.recording.options.findIndex(l => l.startsWith('Normal arrow')); for (let k = 0; k < n; k++) press('ArrowDown'); press('Enter'); }, () => check('normal movement -> scope', __remoteweb.recording.step, 'scope'),
+      () => { press('ArrowDown'); press('Enter'); },     () => check('page rule saved', JSON.stringify(__remoteweb.rules()), JSON.stringify([{ from: '#grid > div', key: 'right', action: 'default', page: location.pathname }])),
+      () => { __remoteweb.focus(grid.children[3]); press('ArrowRight'); }, () => check('CONFIG sibling rule switched off on this page', cur() !== ':Item 5', true),
+      () => {},                                          () => check('export has a page entry', JSON.parse(__remoteweb.exportRules())[0].match.endsWith(location.pathname + '*'), true),
+      () => __remoteweb.clearRules(),                    () => {},
+    ];
+    let i = 0;
+    const run = () => {
+      if (i < steps.length) { steps[i++](); setTimeout(run, 30); }
+      else { const pre = document.createElement('pre'); pre.id = 'results'; pre.textContent = results.join('\n'); document.body.appendChild(pre); }
+    };
+    __remoteweb.config.smoothScroll = false; // headless Chromium does not animate smooth scrolling
+    setTimeout(run, 100);
+  }
+</script>
+</body>
+</html>
