@@ -267,6 +267,13 @@
       () => { press('ArrowDown'); press('Enter'); },     () => check('page rule saved', JSON.stringify(__remoteweb.rules()), JSON.stringify([{ from: '#grid > div', key: 'right', action: 'default', page: location.pathname }])),
       () => { __remoteweb.focus(grid.children[3]); press('ArrowRight'); }, () => check('CONFIG sibling rule switched off on this page', cur() !== ':Item 5', true),
       () => {},                                          () => check('export has a page entry', JSON.parse(__remoteweb.exportRules())[0].match.endsWith(location.pathname + '*'), true),
+      // Remembered item: kept when coming straight back, reset after another container
+      () => { __remoteweb.focus(grid.children[12]); press('ArrowLeft'); press('ArrowRight'); }, () => check('straight back to grid restores Item 13', cur(), ':Item 13'),
+      () => { __remoteweb.focus(grid.children[12]); __remoteweb.focus(document.querySelector('.tab')); __remoteweb.focus([...document.querySelectorAll('.leftbar a')].find(a => a.textContent === 'Settings')); press('ArrowRight'); },
+                                                         () => check('via tabs, grid memory reset -> nearest item', cur(), ':Item 9'),
+      // Cards scrolled out of view in the row are not targets from outside it
+      () => { __remoteweb.focus(document.getElementById('row').children[5]); __remoteweb.focus(document.querySelector('shadow-panel').shadowRoot.getElementById('sa')); press('ArrowLeft'); },
+                                                         () => check('left from Shadow A skips cards hidden in the row', cur(), ':Settings'),
       () => __remoteweb.clearRules(),                    () => {},
     ];
     let i = 0;

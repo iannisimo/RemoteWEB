@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RemoteWEB
 // @namespace    remoteweb
-// @version      0.4.1
+// @version      0.4.2
 // @description  D-pad / TV-remote navigation for any website, with per-site rules
 // @license      Unlicense
 // @homepageURL  https://github.com/iannisimo/RemoteWEB
@@ -477,6 +477,21 @@
     }
   }
 
+  // Containers left on the last move into a different container. Only these keep
+  // their remembered item: going straight back restores it, but after passing
+  // through another container you start fresh.
+  let leftBehind = [];
+  function remember(prev, el) {
+    const chain = new Set();
+    for (let a = parentOf(el); a; a = parentOf(a)) { chain.add(a); memory.set(a, el); }
+    if (!prev || prev === el) return;
+    const justLeft = [];
+    for (let a = parentOf(prev); a && !chain.has(a); a = parentOf(a)) justLeft.push(a);
+    if (!justLeft.length) return; // moved within the same container
+    for (const c of leftBehind) if (!chain.has(c) && !justLeft.includes(c)) memory.delete(c);
+    leftBehind = justLeft;
+  }
+
   function setFocus(el) {
     if (!el) return false;
     const prev = current;
@@ -488,7 +503,7 @@
     current = el;
     ensureStyle(el);
     lastRect = el.getBoundingClientRect();
-    for (let a = parentOf(el); a; a = parentOf(a)) memory.set(a, el);
+    remember(prev, el);
 
     const m = measureSiteFocus(el, () => {
       if (prev !== el && site.opt('hoverEvents')) {
@@ -580,16 +595,42 @@
     return bestIn(dir, from, scope, site.opt('directionMode') === 'cone');
   }
 
+  // The part of `el` left visible by scroll containers that `from` is not in, or
+  // null when it is scrolled out of view there (e.g. a card off the edge of another
+  // carousel). Containers `from` is in are ignored, so lists and carousels still scroll.
+  function visibleRect(el, rect, fromChain, cache) {
+    let { left, top, right, bottom } = rect;
+    for (let a = parentOf(el); a && !fromChain.has(a); a = parentOf(a)) {
+      let box = cache.get(a);
+      if (box === undefined) {
+        const s = getComputedStyle(a);
+        const clips = /(auto|scroll|hidden|clip)/.test(s.overflowX + s.overflowY)
+          && (a.scrollWidth > a.clientWidth + 1 || a.scrollHeight > a.clientHeight + 1);
+        box = clips ? a.getBoundingClientRect() : null;
+        cache.set(a, box);
+      }
+      if (!box) continue;
+      left = Math.max(left, box.left); top = Math.max(top, box.top);
+      right = Math.min(right, box.right); bottom = Math.min(bottom, box.bottom);
+      if (right <= left || bottom <= top) return null;
+    }
+    return new DOMRect(left, top, right - left, bottom - top);
+  }
+
   // `cone`: skip elements that are further off to the side than ahead.
   function bestIn(dir, from, root, cone) {
     const a = from.getBoundingClientRect();
     const ca = center(a);
     let best = null, bestScore = Infinity;
+    const fromChain = new Set();
+    for (let p = parentOf(from); p; p = parentOf(p)) fromChain.add(p);
+    const clipCache = new Map();
 
     for (const el of candidates(root)) {
       if (autoIgnored(el)) continue;
       if (el === from || containsDeep(el, from) || containsDeep(from, el)) continue;
-      const b = el.getBoundingClientRect();
+      const b = visibleRect(el, el.getBoundingClientRect(), fromChain, clipCache);
+      if (!b) continue;
       const cb = center(b);
       let primary, orthoGap, orthoOffset;
 
