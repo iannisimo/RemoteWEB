@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RemoteWEB
 // @namespace    remoteweb
-// @version      0.3.0
+// @version      0.4.0
 // @description  D-pad / TV-remote navigation for any website, with per-site rules
 // @license      Unlicense
 // @homepageURL  https://github.com/iannisimo/RemoteWEB
@@ -101,6 +101,11 @@
     // carousel) and only leaves it when nothing is left in that direction.
     containerFirst: true,
 
+    // Only move to elements that are at least as far in the pressed direction as
+    // they are off to the side (a 45° cone). If none, the page scrolls instead of
+    // jumping diagonally. Every element is still in some direction's cone.
+    strictDirection: true,
+
     // Animate scrolling. Turn off on slow machines for snappier navigation.
     smoothScroll: true,
 
@@ -148,7 +153,7 @@
     // When several entries match (e.g. one for the whole site, one for a page), the one
     // with the most specific `match` is checked first.
     //   Any of these global options can be overridden per site:
-    //   enabled, pointerCursor, allowTransparent, hoverEvents, shadowDom, containerFirst, useSiteFocus
+    //   enabled, pointerCursor, allowTransparent, hoverEvents, shadowDom, containerFirst, strictDirection, useSiteFocus
     sites: [
       {
         match: '*demo.html*',
@@ -575,6 +580,7 @@
   function bestIn(dir, from, root) {
     const a = from.getBoundingClientRect();
     const ca = center(a);
+    const strict = site.opt('strictDirection');
     let best = null, bestScore = Infinity;
 
     for (const el of candidates(root)) {
@@ -597,6 +603,8 @@
         orthoGap = Math.max(0, b.left - a.right, a.left - b.right);
         orthoOffset = Math.abs(cb.x - ca.x);
       }
+      // Mostly sideways, not in the pressed direction: not a valid match.
+      if (strict && orthoGap > primary) continue;
       // Prefer elements in the same row/column, then the closest one.
       const score = primary + orthoGap * 3 + orthoOffset * 0.1 + (orthoGap > 0 ? 100 : 0);
       if (score < bestScore) { bestScore = score; best = el; }
@@ -1371,6 +1379,7 @@
     ['allowTransparent', 'Allow hover-only (invisible) buttons'],
     ['hoverEvents', 'Send hover events to the highlighted element'],
     ['containerFirst', 'Stay inside lists and carousels while possible'],
+    ['strictDirection', 'Don’t jump diagonally; scroll if nothing is in that direction'],
     ['realFocus', 'Give real focus to highlighted buttons and links'],
     ['shadowDom', 'Search inside web components (shadow DOM)'],
     ['smoothScroll', 'Smooth scrolling'],
@@ -1393,50 +1402,87 @@
     return [].concat(key).map((k) => names[k] || k).join(' / ');
   }
 
+  function describeAction(r) {
+    if (r.send) return 'send ' + [].concat(r.send).join(', ');
+    if (r.to === 'none') return 'block';
+    if (r.action === 'pass') return 'let the page handle it';
+    if (r.action === 'default') return 'normal arrow movement';
+    if (r.action === 'click') return 'click ' + (r.target || 'it');
+    if (r.action === 'back') return 'browser back';
+    if (typeof r.action === 'function' || typeof r.to === 'function') return 'custom code';
+    if (typeof r.to === 'string') return 'go to ' + r.to;
+    if (r.to && typeof r.to.sibling === 'number') return `${r.to.sibling > 0 ? 'next' : 'previous'} sibling (${r.to.sibling > 0 ? '+' : ''}${r.to.sibling})`;
+    if (r.to && typeof r.to.index === 'number') return `${r.to.index < 0 ? 'last item' : 'item #' + (r.to.index + 1)} of ${r.to.in}`;
+    return '?';
+  }
+
+  // Rule as nodes: key chips, where it applies, what it does.
   function describeRule(r) {
     const from = !r.from || r.from === 'html' ? 'anywhere' : r.from;
-    let what;
-    if (r.send) what = 'send ' + [].concat(r.send).join(', ');
-    else if (r.to === 'none') what = 'block';
-    else if (r.action === 'pass') what = 'let the page handle it';
-    else if (r.action === 'default') what = 'normal arrow movement';
-    else if (r.action === 'click') what = 'click ' + (r.target || 'it');
-    else if (r.action === 'back') what = 'browser back';
-    else if (typeof r.action === 'function' || typeof r.to === 'function') what = 'custom code';
-    else if (typeof r.to === 'string') what = 'go to ' + r.to;
-    else if (r.to && typeof r.to.sibling === 'number') what = `${r.to.sibling > 0 ? 'next' : 'previous'} sibling (${r.to.sibling > 0 ? '+' : ''}${r.to.sibling})`;
-    else if (r.to && typeof r.to.index === 'number') what = `${r.to.index < 0 ? 'last item' : 'item #' + (r.to.index + 1)} of ${r.to.in}`;
-    else what = '?';
-    return `${describeKey(r.key)}   on ${from}   →  ${what}`;
+    return [
+      ...[].concat(r.key).map((k) => h('kbd', {}, describeKey(k))),
+      h('span', { class: 'from' }, from),
+      h('span', { class: 'arrow' }, '→'),
+      h('span', { class: 'what' }, describeAction(r)),
+    ];
   }
 
   function describeIgnore(x) {
-    return `${x.unignore ? 'un-ignore' : 'skip'}  ${x.sel}`;
+    return [h('span', { class: 'what' }, x.unignore ? 'un-ignore' : 'skip'), h('span', { class: 'from' }, x.sel)];
   }
 
   const SETTINGS_CSS = `
     :host { all: initial; }
-    .backdrop { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center;
-      font: 18px/1.4 system-ui, sans-serif; color: #eee; }
-    .dlg { background: #141414; width: min(920px, 94vw); max-height: 88vh; overflow: auto; box-sizing: border-box;
-      border: 2px solid #3d9eff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 10px 50px #000c; }
-    h2 { margin: 0; font-size: 24px; color: #3d9eff; }
-    h3 { margin: 20px 0 6px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: #999; font-weight: 600; }
-    .sub { opacity: .7; margin: 2px 0 12px; word-break: break-all; font-size: 15px; }
-    .status { font-weight: 600; margin-bottom: 8px; }
-    .status.on { color: #3ddc84; } .status.off { color: #ff8a8a; }
-    .row { display: flex; gap: 12px; align-items: center; padding: 5px 0; border-bottom: 1px solid #262626; }
-    .txt { flex: 1; font: 15px/1.4 ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; }
-    .where { color: #ffb43d; }
-    .empty { opacity: .45; margin: 2px 0; font-size: 15px; }
-    .btns { display: flex; gap: 10px; flex-wrap: wrap; }
-    button { font: inherit; font-size: 16px; background: #262626; color: #eee; border: 1px solid #444; border-radius: 6px;
-      padding: 7px 14px; cursor: pointer; text-align: left; }
-    button.sel { outline: 3px solid #3d9eff; outline-offset: 2px; background: #2f4258; }
-    button.del { color: #ff9a9a; flex: none; }
-    .opts button { display: block; width: 100%; margin: 5px 0; }
-    .changed { color: #ffb43d; font-size: 14px; }
-    .foot { margin-top: 16px; opacity: .55; font-size: 14px; }
+    * { box-sizing: border-box; }
+    .backdrop { --bg: #161618; --raised: #1e1e21; --line: #2b2b30; --text: #ececee; --muted: #8e8e98;
+      --accent: #7aa7f7; --good: #5fcf8a; --warn: #e8b45a; --danger: #f08080;
+      position: fixed; inset: 0; background: #0009; display: flex; align-items: center; justify-content: center;
+      font: 17px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--text); }
+    .dlg { background: var(--bg); width: min(780px, 94vw); max-height: 88vh; overflow: auto;
+      border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px 18px; box-shadow: 0 24px 60px #0008; }
+    .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+    .sub { color: var(--muted); margin-top: 2px; font: 14px/1.4 ui-monospace, 'SF Mono', Menlo, monospace; word-break: break-all; }
+    .status { flex: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500;
+      padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+    .status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .status.on { color: var(--good); border-color: #5fcf8a44; }
+    h3 { display: flex; align-items: baseline; gap: 8px; margin: 22px 0 8px; font-size: 13px; font-weight: 600;
+      letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    h3 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; opacity: .8; }
+    .group { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .group > * + * { border-top: 1px solid var(--line); }
+    button { font: inherit; color: inherit; background: none; border: 0; margin: 0; cursor: pointer; text-align: left; }
+    .item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 14px; }
+    .item .label { flex: 1; }
+    .val { color: var(--muted); }
+    .val.on { color: var(--text); }
+    .tag { font-size: 12px; color: var(--warn); border: 1px solid #e8b45a55; border-radius: 4px; padding: 0 6px; }
+    .switch { flex: none; position: relative; width: 38px; height: 22px; border-radius: 11px; background: #3a3a41; transition: background .15s; }
+    .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+      background: #d4d4d8; transition: transform .15s; }
+    .switch.on { background: var(--accent); }
+    .switch.on::after { transform: translateX(16px); background: #fff; }
+    .row { display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 14px; min-height: 46px; }
+    .txt { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;
+      font: 14px/1.4 ui-monospace, 'SF Mono', Menlo, monospace; word-break: break-all; }
+    kbd { font: 600 13px/1 system-ui, sans-serif; padding: 4px 7px; border-radius: 5px; background: #2c2c32;
+      border: 1px solid #3a3a41; border-bottom-width: 2px; }
+    .arrow { color: var(--muted); }
+    .from { color: var(--text); }
+    .what { color: var(--muted); }
+    .where { color: var(--warn); }
+    .empty { color: var(--muted); font-size: 15px; padding: 10px 14px; margin: 0; }
+    .del { flex: none; font-size: 14px; color: var(--muted); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+    .btn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--raised); }
+    .btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 500; }
+    .sel { background: #262b36; box-shadow: inset 0 0 0 2px var(--accent); }
+    .btn.sel { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .btn.primary.sel { background: var(--text); }
+    .del.sel { color: var(--danger); background: #3a2224; box-shadow: inset 0 0 0 2px var(--danger); border-color: transparent; }
+    .foot { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 16px; color: var(--muted); font-size: 13px; }
+    .foot kbd { font-size: 11px; padding: 2px 5px; margin-right: 4px; color: var(--text); }
   `;
 
   function applyEnabledChange() {
@@ -1457,10 +1503,16 @@
 
     const delRule = (r) => () => { storedRules = storedRules.filter((x) => x !== r); saveStored(); rerender(); };
     const delIgnore = (x) => () => { storedIgnore = storedIgnore.filter((y) => y !== x); saveIgnore(); if (debugOn) drawDebug(); rerender(); };
-    const row = (text, onDelete, where) => h('div', { class: 'row' },
-      h('span', { class: 'txt' }, where ? h('span', { class: 'where' }, where + '   ') : null, text),
-      onDelete ? h('button', { class: 'del', onclick: onDelete }, 'Delete') : null);
-    const section = (title, rows) => [h('h3', {}, title), rows.length ? rows : h('p', { class: 'empty' }, 'none')];
+    const row = (parts, onDelete, where) => h('div', { class: 'row' },
+      h('span', { class: 'txt' }, where ? h('span', { class: 'where' }, where) : null, parts),
+      onDelete ? h('button', { class: 'del', onclick: onDelete }, 'Remove') : null);
+    const heading = (title, hint) => h('h3', {}, title, hint ? h('span', { class: 'hint' }, hint) : null);
+    const section = (title, rows, hint) => [heading(title, hint),
+      h('div', { class: 'group' }, rows.length ? rows : h('p', { class: 'empty' }, 'None'))];
+    const changedTag = (name) => (name in storedOptions ? h('span', { class: 'tag' }, 'changed') : null);
+    const item = (label, right, onclick, extra) => h('button', { class: 'item', onclick },
+      h('span', { class: 'label' }, label), extra, right);
+    const value = (text, on) => h('span', { class: 'val' + (on ? ' on' : '') }, text);
 
     const pageRules = storedRules.filter((r) => r.page === page);
     const siteRules = storedRules.filter((r) => !r.page);
@@ -1470,61 +1522,66 @@
     const otherIgnores = storedIgnore.filter((x) => x.page && x.page !== page);
 
     const optionButtons = OPTION_LABELS.map(([name, label]) => {
-      const value = !!site.opt(name);
-      const changed = name in storedOptions;
-      return h('button', { onclick: () => {
-        storedOptions[name] = !value;
+      const on = !!site.opt(name);
+      return item(label, h('span', { class: 'switch' + (on ? ' on' : '') }), () => {
+        storedOptions[name] = !on;
         if (storedOptions[name] === !!site.configOpt(name)) delete storedOptions[name];
         saveOptions(); rerender();
-      } }, `${value ? '✅' : '⬜'}  ${label}`, changed ? h('span', { class: 'changed' }, '   (changed for this site)') : null);
+      }, changedTag(name));
     });
     const backValue = site.opt('backDefault');
-    optionButtons.push(h('button', { onclick: () => {
+    optionButtons.push(item('Back with no rule', value(backValue === 'pass' ? 'Page handles it' : 'Browser back', true), () => {
       storedOptions.backDefault = backValue === 'pass' ? 'history' : 'pass';
       if (storedOptions.backDefault === site.configOpt('backDefault')) delete storedOptions.backDefault;
       saveOptions(); rerender();
-    } }, `Back with no rule:  ${backValue === 'pass' ? 'let the page handle it' : 'browser back'}`,
-      'backDefault' in storedOptions ? h('span', { class: 'changed' }, '   (changed for this site)') : null));
+    }, changedTag('backDefault')));
+    if (Object.keys(storedOptions).length) {
+      optionButtons.push(item('Reset options to defaults', null, () => { storedOptions = {}; saveOptions(); rerender(); }));
+    }
 
+    const pageText = pageState === undefined ? 'Same as site' : pageState ? 'On' : 'Off';
     const dlg = h('div', { class: 'dlg' },
-      h('h2', {}, 'RemoteWEB settings'),
-      h('div', { class: 'sub' }, `${host}  ·  ${page}`),
-      h('div', { class: 'status ' + (on ? 'on' : 'off') }, on ? '● Active on this page' : '○ Off on this page'),
-      h('div', { class: 'btns' },
-        h('button', { onclick: () => { enabledStore.site = !siteOn; saveEnabled(); applyEnabledChange(); rerender(); } },
-          `Whole site: ${siteOn ? 'ON' : 'OFF'}`),
-        h('button', { onclick: () => {
+      h('div', { class: 'head' },
+        h('div', {}, h('h2', {}, 'RemoteWEB'), h('div', { class: 'sub' }, `${host} · ${page}`)),
+        h('span', { class: 'status ' + (on ? 'on' : 'off') }, on ? 'Active on this page' : 'Off on this page')),
+      heading('Enabled'),
+      h('div', { class: 'group' },
+        item('Whole site', value(siteOn ? 'On' : 'Off', siteOn), () => {
+          enabledStore.site = !siteOn; saveEnabled(); applyEnabledChange(); rerender();
+        }),
+        item('This page', value(pageText, pageState !== undefined), () => {
           // same as site -> ON -> OFF -> same as site
           if (pageState === undefined) enabledStore.pages[page] = true;
           else if (pageState === true) enabledStore.pages[page] = false;
           else delete enabledStore.pages[page];
           saveEnabled(); applyEnabledChange(); rerender();
-        } }, `This page: ${pageState === undefined ? 'same as site' : pageState ? 'ON' : 'OFF'}`)),
-      section('Rules for this page (checked first)', pageRules.map((r) => row(describeRule(r), delRule(r)))),
-      section('Rules for the whole site', siteRules.map((r) => row(describeRule(r), delRule(r)))),
-      section('Rules for other pages of this site', otherRules.map((r) => row(describeRule(r), delRule(r), r.page))),
-      section('Ignored by arrow movement (F5)', [
+        })),
+      section('Rules · this page', pageRules.map((r) => row(describeRule(r), delRule(r))), 'checked first'),
+      section('Rules · whole site', siteRules.map((r) => row(describeRule(r), delRule(r)))),
+      otherRules.length ? section('Rules · other pages', otherRules.map((r) => row(describeRule(r), delRule(r), r.page))) : null,
+      section('Skipped by arrow movement', [
         ...pageIgnores.map((x) => row(describeIgnore(x), delIgnore(x), 'this page')),
         ...siteIgnores.map((x) => row(describeIgnore(x), delIgnore(x), 'whole site')),
         ...otherIgnores.map((x) => row(describeIgnore(x), delIgnore(x), x.page)),
-      ]),
-      section('From CONFIG (read-only: edit the script to change)', [
+      ], 'add with F5'),
+      section('From CONFIG', [
         ...site.rules.map((r) => row(describeRule(r))),
-        ...site.autoIgnore.map((sel) => row('skip  ' + sel)),
-        ...site.autoUnignore.map((sel) => row('un-ignore  ' + sel)),
-      ]),
-      h('h3', {}, 'Options for this site'),
-      h('div', { class: 'opts' }, optionButtons,
-        Object.keys(storedOptions).length ? h('button', { onclick: () => { storedOptions = {}; saveOptions(); rerender(); } }, 'Reset options to defaults') : null),
-      h('h3', {}, ''),
-      h('div', { class: 'btns' },
-        h('button', { onclick: () => {
+        ...site.autoIgnore.map((sel) => row(describeIgnore({ sel }))),
+        ...site.autoUnignore.map((sel) => row(describeIgnore({ sel, unignore: true }))),
+      ], 'read-only, edit the script to change'),
+      heading('Options', 'for this site'),
+      h('div', { class: 'group' }, optionButtons),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn', onclick: () => {
           const text = exportRules();
           const done = (ok) => toast(ok ? '✔ Copied. Paste it into CONFIG.sites in the script.' : 'Could not copy; the text is in the browser console.', 3500);
           try { navigator.clipboard.writeText(text).then(() => done(true), () => done(false)); } catch { done(false); }
-        } }, 'Copy as CONFIG (for the script file)'),
-        h('button', { onclick: closeSettings }, 'Close')),
-      h('div', { class: 'foot' }, '↑↓ move  ·  OK select  ·  Back close  ·  Ctrl+Shift+F8 close'));
+        } }, 'Copy as CONFIG'),
+        h('button', { class: 'btn primary', onclick: closeSettings }, 'Close')),
+      h('div', { class: 'foot' },
+        h('span', {}, h('kbd', {}, '↑↓'), 'move'),
+        h('span', {}, h('kbd', {}, 'OK'), 'select'),
+        h('span', {}, h('kbd', {}, 'Back'), 'close')));
 
     const backdrop = h('div', { class: 'backdrop' }, dlg);
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeSettings(); });
