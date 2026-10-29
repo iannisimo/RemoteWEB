@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         RemoteWEB
 // @namespace    remoteweb
-// @version      0.2.0
+// @version      0.3.0
 // @description  D-pad / TV-remote navigation for any website, with per-site rules
+// @license      Unlicense
+// @homepageURL  https://github.com/iannisimo/RemoteWEB
+// @updateURL    https://raw.githubusercontent.com/iannisimo/RemoteWEB/main/remoteweb.user.js
+// @downloadURL  https://raw.githubusercontent.com/iannisimo/RemoteWEB/main/remoteweb.user.js
 // @match        *://*/*
 // @match        file:///*
 // @run-at       document-idle

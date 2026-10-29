@@ -36,6 +36,8 @@ class Handler(BaseHTTPRequestHandler):
                     f"// @updateURL    {url}\n"
                     f"// @downloadURL  {url}")
 
+        # Drop the GitHub update URLs; this server's own URLs are added below.
+        source = re.sub(r"^// @(updateURL|downloadURL)\s+.*\n", "", source, flags=re.M)
         # "0.2.0" -> "0.2.0.20261029153012"
         source, n = re.subn(r"^// @version\s+(\S+)$", patch_header, source, count=1, flags=re.M)
         if n == 0:

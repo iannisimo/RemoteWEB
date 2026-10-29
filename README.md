@@ -12,7 +12,7 @@ A userscript that makes websites usable with a TV remote or d-pad (arrow keys + 
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
-2. Open `remoteweb.user.js` from this repo (raw) and install it.
+2. Open [remoteweb.user.js](https://raw.githubusercontent.com/iannisimo/RemoteWEB/main/remoteweb.user.js) and install it. It updates itself from this repo.
 
 For auto-updates while editing locally, serve the script with `python3 serve.py` and install from `http://127.0.0.1:8765/remoteweb.user.js`. Every save becomes a new version.
 
@@ -32,6 +32,10 @@ Recorded rules and settings are stored in each site's browser storage. To make t
 
 In the browser console, `__remoteweb.why($0)` explains why an inspected element can or can't be reached.
 
+## Publish
+
+`./push.sh "message" [patch|minor|major]` bumps `@version` if the script changed, then commits and pushes, so installed copies pick up the update.
+
 ## Test
 
 Open `demo.html?test` in a browser; results appear at the bottom of the page. Headless:
@@ -39,3 +43,7 @@ Open `demo.html?test` in a browser; results appear at the bottom of the page. He
 ```
 chromium --headless=new --virtual-time-budget=40000 --dump-dom "file://$PWD/demo.html?test" | grep -E "^(PASS|FAIL)|results\">"
 ```
+
+## License
+
+[Unlicense](LICENSE): public domain.
