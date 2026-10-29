@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RemoteWEB
 // @namespace    remoteweb
-// @version      0.4.0
+// @version      0.4.1
 // @description  D-pad / TV-remote navigation for any website, with per-site rules
 // @license      Unlicense
 // @homepageURL  https://github.com/iannisimo/RemoteWEB
@@ -101,10 +101,13 @@
     // carousel) and only leaves it when nothing is left in that direction.
     containerFirst: true,
 
-    // Only move to elements that are at least as far in the pressed direction as
-    // they are off to the side (a 45° cone). If none, the page scrolls instead of
-    // jumping diagonally. Every element is still in some direction's cone.
-    strictDirection: true,
+    // Which elements count as "in the pressed direction":
+    //   'free'      anything ahead, even far off to the side (nearest one wins)
+    //   'cone'      only elements at least as far ahead as they are off to the side
+    //               (a 45° cone); if none, the page scrolls instead of jumping diagonally
+    //   'container' the cone inside lists and carousels (scroll containers), 'free'
+    //               when leaving them for the rest of the page
+    directionMode: 'container',
 
     // Animate scrolling. Turn off on slow machines for snappier navigation.
     smoothScroll: true,
@@ -153,7 +156,7 @@
     // When several entries match (e.g. one for the whole site, one for a page), the one
     // with the most specific `match` is checked first.
     //   Any of these global options can be overridden per site:
-    //   enabled, pointerCursor, allowTransparent, hoverEvents, shadowDom, containerFirst, strictDirection, useSiteFocus
+    //   enabled, pointerCursor, allowTransparent, hoverEvents, shadowDom, containerFirst, directionMode, useSiteFocus
     sites: [
       {
         match: '*demo.html*',
@@ -563,24 +566,24 @@
     if (!from) return null;
     if (within) {
       const root = queryDeep(within)[0];
-      return root ? bestIn(dir, from, root) : null;
+      return root ? bestIn(dir, from, root, site.opt('directionMode') !== 'free') : null;
     }
     const scope = scopeRoot();
     // If a popup just opened and focus is still behind it, go straight into the popup.
     const inScope = scope === document || containsDeep(scope, from);
     if (inScope && site.opt('containerFirst')) {
       for (const container of scrollContainers(from, scope)) {
-        const best = bestIn(dir, from, container);
+        const best = bestIn(dir, from, container, site.opt('directionMode') !== 'free');
         if (best) return best;
       }
     }
-    return bestIn(dir, from, scope);
+    return bestIn(dir, from, scope, site.opt('directionMode') === 'cone');
   }
 
-  function bestIn(dir, from, root) {
+  // `cone`: skip elements that are further off to the side than ahead.
+  function bestIn(dir, from, root, cone) {
     const a = from.getBoundingClientRect();
     const ca = center(a);
-    const strict = site.opt('strictDirection');
     let best = null, bestScore = Infinity;
 
     for (const el of candidates(root)) {
@@ -604,7 +607,7 @@
         orthoOffset = Math.abs(cb.x - ca.x);
       }
       // Mostly sideways, not in the pressed direction: not a valid match.
-      if (strict && orthoGap > primary) continue;
+      if (cone && orthoGap > primary) continue;
       // Prefer elements in the same row/column, then the closest one.
       const score = primary + orthoGap * 3 + orthoOffset * 0.1 + (orthoGap > 0 ? 100 : 0);
       if (score < bestScore) { bestScore = score; best = el; }
@@ -1379,7 +1382,6 @@
     ['allowTransparent', 'Allow hover-only (invisible) buttons'],
     ['hoverEvents', 'Send hover events to the highlighted element'],
     ['containerFirst', 'Stay inside lists and carousels while possible'],
-    ['strictDirection', 'Don’t jump diagonally; scroll if nothing is in that direction'],
     ['realFocus', 'Give real focus to highlighted buttons and links'],
     ['shadowDom', 'Search inside web components (shadow DOM)'],
     ['smoothScroll', 'Smooth scrolling'],
@@ -1535,6 +1537,14 @@
       if (storedOptions.backDefault === site.configOpt('backDefault')) delete storedOptions.backDefault;
       saveOptions(); rerender();
     }, changedTag('backDefault')));
+    const DIRECTION_MODES = { container: 'Strict in lists, free elsewhere', cone: 'Strict everywhere', free: 'Free' };
+    const modes = Object.keys(DIRECTION_MODES);
+    const dirValue = site.opt('directionMode');
+    optionButtons.push(item('Direction matching', value(DIRECTION_MODES[dirValue] || dirValue, true), () => {
+      storedOptions.directionMode = modes[(modes.indexOf(dirValue) + 1) % modes.length];
+      if (storedOptions.directionMode === site.configOpt('directionMode')) delete storedOptions.directionMode;
+      saveOptions(); rerender();
+    }, changedTag('directionMode')));
     if (Object.keys(storedOptions).length) {
       optionButtons.push(item('Reset options to defaults', null, () => { storedOptions = {}; saveOptions(); rerender(); }));
     }
